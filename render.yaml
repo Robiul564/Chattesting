@@ -28,6 +28,12 @@ services:
   - type: redis
     name: whatsapp-platform-redis
     plan: starter
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: public
 databases:
   - name: whatsapp-platform-db
     plan: starter
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: public
