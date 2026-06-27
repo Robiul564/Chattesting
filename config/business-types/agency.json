@@ -1,0 +1,44 @@
+{
+  "business_type": "agency",
+  "label": "Service Agency",
+  "config": {
+    "requires_booking": false,
+    "staff_assignment": true,
+    "multi_department": true,
+    "payment_required": false,
+    "lead_generation": true,
+    "quotation_required": true
+  },
+  "onboarding_questions": [
+    {
+      "key": "lead_qualification_questions",
+      "prompt": "What 2-3 questions should the AI ask to qualify a new lead before assigning it to sales? (e.g. budget, timeline, project type)",
+      "type": "text_list",
+      "example": "Budget range, Project type, Timeline"
+    },
+    {
+      "key": "auto_assign_leads",
+      "prompt": "Should new leads be auto-assigned round-robin to your sales team, or do you want to assign manually?",
+      "type": "boolean",
+      "quick_replies": ["Auto-assign", "I'll assign manually"]
+    },
+    {
+      "key": "quote_turnaround_hours",
+      "prompt": "What's your typical turnaround time to send a quote after requirements are collected?",
+      "type": "number",
+      "example": "24"
+    }
+  ],
+  "default_services_prompt": "List the services you offer (e.g. Website Development, SEO, Branding) — one per message or comma-separated.",
+  "workflow_templates": [
+    {
+      "type": "LEAD_GENERATION",
+      "steps": ["GREETING", "QUALIFICATION_QUESTIONS", "TEAM_ASSIGNMENT", "FOLLOW_UP_SEQUENCE"]
+    },
+    {
+      "type": "QUOTATION",
+      "steps": ["GREETING", "REQUIREMENT_COLLECTION", "QUOTE_GENERATION", "APPROVAL", "FOLLOW_UP"]
+    }
+  ],
+  "default_agents": ["RECEPTION", "SALES", "ESCALATION"]
+}

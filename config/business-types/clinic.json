@@ -1,0 +1,50 @@
+{
+  "business_type": "clinic",
+  "label": "Clinic / Healthcare Practice",
+  "config": {
+    "requires_booking": true,
+    "staff_assignment": true,
+    "multi_department": true,
+    "payment_required": false,
+    "lead_generation": false,
+    "quotation_required": false
+  },
+  "onboarding_questions": [
+    {
+      "key": "departments_enabled",
+      "prompt": "Do you have different departments (e.g. Dental, General, Eye Care)?",
+      "type": "boolean",
+      "quick_replies": ["Yes", "No, just one team"]
+    },
+    {
+      "key": "requires_doctor_selection",
+      "prompt": "Should patients be able to choose a specific doctor when booking?",
+      "type": "boolean",
+      "quick_replies": ["Yes", "No, auto-assign"]
+    },
+    {
+      "key": "appointment_buffer_mins",
+      "prompt": "How many minutes should we leave between appointments as buffer?",
+      "type": "number",
+      "example": "15"
+    },
+    {
+      "key": "requires_intake_form",
+      "prompt": "Should new patients fill a short intake form before their first visit?",
+      "type": "boolean",
+      "quick_replies": ["Yes", "No"]
+    }
+  ],
+  "default_services_prompt": "List the services you offer (e.g. General Consultation, Dental Checkup, Eye Specialist) — one per message or comma-separated.",
+  "workflow_templates": [
+    {
+      "type": "APPOINTMENT_BOOKING",
+      "steps": ["GREETING", "SERVICE_SELECTION", "STAFF_SELECTION", "SLOT_SELECTION", "CONFIRMATION", "REMINDER_24H"]
+    },
+    {
+      "type": "CUSTOMER_SUPPORT",
+      "steps": ["GREETING", "AI_RESOLUTION", "ESCALATION_IF_UNRESOLVED"]
+    }
+  ],
+  "default_agents": ["RECEPTION", "BOOKING", "SUPPORT", "ESCALATION"]
+}

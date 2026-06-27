@@ -1,0 +1,50 @@
+{
+  "business_type": "restaurant",
+  "label": "Restaurant",
+  "config": {
+    "requires_booking": true,
+    "staff_assignment": false,
+    "multi_department": false,
+    "payment_required": true,
+    "lead_generation": false,
+    "quotation_required": false
+  },
+  "onboarding_questions": [
+    {
+      "key": "supports_table_booking",
+      "prompt": "Should customers be able to book a table through WhatsApp?",
+      "type": "boolean",
+      "quick_replies": ["Yes", "No, orders only"]
+    },
+    {
+      "key": "supports_delivery_orders",
+      "prompt": "Do you take delivery or pickup orders through WhatsApp?",
+      "type": "boolean",
+      "quick_replies": ["Yes", "No"]
+    },
+    {
+      "key": "menu_categories",
+      "prompt": "What are your menu categories? (e.g. Starters, Mains, Desserts, Drinks)",
+      "type": "text_list",
+      "example": "Starters, Mains, Desserts, Drinks"
+    },
+    {
+      "key": "payment_method",
+      "prompt": "How do customers pay — cash on delivery, online payment link, or both?",
+      "type": "single_select",
+      "quick_replies": ["Cash on delivery", "Online payment", "Both"]
+    }
+  ],
+  "default_services_prompt": "List your menu items with category, name, and price (e.g. Mains: Grilled Chicken - $12).",
+  "workflow_templates": [
+    {
+      "type": "ECOMMERCE_ORDER",
+      "steps": ["GREETING", "MENU_BROWSE", "CART_BUILD", "PAYMENT", "ORDER_CONFIRMATION"]
+    },
+    {
+      "type": "APPOINTMENT_BOOKING",
+      "steps": ["GREETING", "PARTY_SIZE", "SLOT_SELECTION", "CONFIRMATION"]
+    }
+  ],
+  "default_agents": ["RECEPTION", "SUPPORT", "BOOKING"]
+}

@@ -1,0 +1,427 @@
+// ============================================================================
+// MULTI-TENANT WHATSAPP BUSINESS PLATFORM — CORE SCHEMA
+// ============================================================================
+// Design rule: EVERY table that holds business data carries a tenantId.
+// No table is allowed to join across tenants. Enforce this in app code with
+// a Prisma middleware ($use) that injects tenantId into every query — see
+// docs/ARCHITECTURE.md Layer 9 for the exact middleware pattern to ask
+// Copilot to generate.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 9: MULTI-TENANT ROOT
+// ----------------------------------------------------------------------------
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique // used in URLs / webhook routing
+  status    TenantStatus @default(ONBOARDING)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  business        Business?
+  staff           Staff[]
+  departments     Department[]
+  services        Service[]
+  knowledgeItems  KnowledgeItem[]
+  workflows       Workflow[]
+  conversations   Conversation[]
+  whatsappAccount WhatsAppAccount?
+  analyticsEvents AnalyticsEvent[]
+  weeklyReports   WeeklyReport[]
+
+  @@index([slug])
+}
+
+enum TenantStatus {
+  ONBOARDING   // currently going through guided WhatsApp setup
+  ACTIVE       // fully configured and live
+  PAUSED
+  SUSPENDED
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 1: WHATSAPP CONNECTION + ONBOARDING STATE
+// ----------------------------------------------------------------------------
+
+model WhatsAppAccount {
+  id                String   @id @default(uuid())
+  tenantId          String   @unique
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+
+  phoneNumberId     String   @unique // Meta phone_number_id (or provider equivalent)
+  wabaId            String?         // WhatsApp Business Account ID
+  displayPhoneNumber String
+  provider          WhatsAppProvider @default(META_CLOUD_API)
+  accessTokenRef    String          // reference/key into your secrets manager — NEVER store raw token in DB
+  webhookVerifyToken String
+
+  createdAt DateTime @default(now())
+}
+
+enum WhatsAppProvider {
+  META_CLOUD_API
+  TWILIO
+  DIALOG_360
+}
+
+// Tracks exactly where a tenant is in the guided onboarding conversation.
+// This is the state machine driving Layer 1 + Layer 2.
+model OnboardingSession {
+  id          String   @id @default(uuid())
+  tenantId    String   @unique
+  currentStep OnboardingStep @default(BUSINESS_NAME)
+  answers     Json     @default("{}") // accumulates raw answers as collected
+  completedAt DateTime?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
+enum OnboardingStep {
+  BUSINESS_NAME
+  BUSINESS_CATEGORY
+  WEBSITE
+  BUSINESS_DESCRIPTION
+  LOCATION
+  TIMEZONE
+  WORKING_HOURS
+  LANGUAGES
+  OPERATIONS_MODEL        // "How do you serve customers?" — drives Layer 2 branching
+  DYNAMIC_BUSINESS_QUESTIONS // branches per business_type, see config/business-types/*.json
+  TEAM_SIZE_SELECTION
+  DEPARTMENTS_SETUP
+  STAFF_SETUP
+  SERVICES_SETUP
+  KNOWLEDGE_COLLECTION
+  REVIEW_AND_CONFIRM
+  COMPLETE
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 2: BUSINESS PROFILE (the dynamic configuration "source of truth")
+// ----------------------------------------------------------------------------
+
+model Business {
+  id          String   @id @default(uuid())
+  tenantId    String   @unique
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  name        String
+  category    String              // free text shown to owner, e.g. "Dental Clinic"
+  businessType String             // KEY into config/business-types/*.json, e.g. "clinic"
+  website     String?
+  description String?  @db.Text
+  location    String?
+  timezone    String   @default("UTC")
+  workingHours Json    // { "mon": {"open":"09:00","close":"18:00"}, ... }
+  languages   String[] @default(["en"])
+
+  // The actual resolved Business Profile Configuration, snapshotted at
+  // onboarding time from config/business-types/<businessType>.json,
+  // then allowed to be customized per-tenant from here on.
+  config      Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 3: TEAM & DEPARTMENT MANAGEMENT
+// ----------------------------------------------------------------------------
+
+model Department {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  name      String   // "Sales", "Support", "Booking", "Finance", "HR"
+  staff     Staff[]
+  services  Service[]
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Staff {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+
+  name         String
+  role         String   // "Owner", "Manager", "Agent", "Doctor", etc.
+  phone        String
+  email        String?
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  availability Json?    // { "mon": ["09:00-13:00","14:00-18:00"], ... }
+  isActive     Boolean  @default(true)
+
+  assignedServices Service[] @relation("StaffServices")
+  conversations    Conversation[] @relation("AssignedStaff")
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 4: SERVICE & PRODUCT BUILDER
+// ----------------------------------------------------------------------------
+
+model Service {
+  id           String   @id @default(uuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+
+  name         String
+  description  String?  @db.Text
+  price        Decimal? @db.Decimal(12, 2)
+  currency     String   @default("USD")
+  durationMins Int?     // null for non-bookable products (e.g. restaurant item)
+
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  assignedStaff Staff[] @relation("StaffServices")
+  availability  Json?   // optional override of staff/business hours for this service
+
+  isActive     Boolean  @default(true)
+  bookings     Booking[]
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 5: AI KNOWLEDGE COLLECTION (RAG source data)
+// ----------------------------------------------------------------------------
+
+model KnowledgeItem {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  type      KnowledgeType
+  title     String
+  content   String?  @db.Text   // for TEXT/FAQ types
+  sourceUrl String?             // for URL/DOC types — pointer to storage (S3/GCS), not raw file
+  status    KnowledgeStatus @default(PENDING)
+
+  // Once processed, chunks live in a vector store (e.g. pgvector/Pinecone),
+  // keyed by knowledgeItemId. Do NOT store embeddings in this table —
+  // keep this as the source-of-truth record and vectors in a separate
+  // VectorChunk table or external vector DB. See docs/ARCHITECTURE.md Layer 5.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+enum KnowledgeType {
+  ABOUT_US
+  MISSION
+  POLICY
+  FAQ
+  DOCUMENT_PDF
+  DOCUMENT_DOCX
+  WEBSITE_URL
+  GOOGLE_DOC
+}
+
+enum KnowledgeStatus {
+  PENDING
+  PROCESSING
+  INDEXED
+  FAILED
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 6: WORKFLOWS (generated automatically from Business Profile Config)
+// ----------------------------------------------------------------------------
+
+model Workflow {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  type        WorkflowType
+  definition  Json     // ordered array of steps; see config/business-types/*.json "workflow_templates"
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+enum WorkflowType {
+  LEAD_GENERATION
+  APPOINTMENT_BOOKING
+  CUSTOMER_SUPPORT
+  QUOTATION
+  ECOMMERCE_ORDER
+  CUSTOM
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 7 + CONVERSATIONS: AI AGENT ORCHESTRATION
+// ----------------------------------------------------------------------------
+
+model Conversation {
+  id               String   @id @default(uuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+
+  customerPhone    String
+  customerName     String?
+
+  currentAgent     AgentType @default(RECEPTION)
+  status           ConversationStatus @default(AI_HANDLING)
+
+  assignedStaffId  String?
+  assignedStaff    Staff?   @relation("AssignedStaff", fields: [assignedStaffId], references: [id])
+
+  aiSummary        String?  @db.Text // generated before human handoff (Layer 8)
+  messages         Message[]
+  bookings         Booking[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, customerPhone])
+}
+
+enum AgentType {
+  RECEPTION
+  SALES
+  SUPPORT
+  BOOKING
+  ESCALATION
+}
+
+enum ConversationStatus {
+  AI_HANDLING
+  PENDING_HUMAN
+  HUMAN_HANDLING
+  RESOLVED
+  CLOSED
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  direction      MessageDirection
+  sender         MessageSender
+  content        String   @db.Text
+  metadata       Json?    // raw WhatsApp payload, button replies, media refs, etc.
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSender {
+  CUSTOMER
+  AI_AGENT
+  HUMAN_STAFF
+  SYSTEM
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 6/7 SUPPORT: BOOKINGS (output of Appointment Workflow)
+// ----------------------------------------------------------------------------
+
+model Booking {
+  id             String   @id @default(uuid())
+  tenantId       String
+
+  serviceId      String
+  service        Service  @relation(fields: [serviceId], references: [id])
+
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id])
+
+  customerPhone  String
+  customerName   String?
+  staffId        String?
+
+  scheduledAt    DateTime
+  status         BookingStatus @default(PENDING)
+  notes          String?  @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+// ----------------------------------------------------------------------------
+// LAYER 10: ENTERPRISE ANALYTICS
+// ----------------------------------------------------------------------------
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  eventType String   // "conversation_started", "lead_qualified", "booking_created", "human_takeover", etc.
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, eventType])
+}
+
+model WeeklyReport {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  periodStart DateTime
+  periodEnd   DateTime
+  metrics     Json     // { conversations, leads, bookings, conversionRate, csat, revenue, ... }
+  aiNarrative String?  @db.Text // auto-generated written summary
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model VectorChunk {
+  id              String   @id @default(uuid())
+  tenantId        String
+  knowledgeItemId String
+  knowledgeItem   KnowledgeItem @relation(fields: [knowledgeItemId], references: [id])
+  content         String   @db.Text
+  embedding       Unsupported("vector(1536)")?
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([knowledgeItemId])
+}
